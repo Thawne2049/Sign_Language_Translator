@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Video Call</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.js"></script>
+    <style>
+        body { text-align: center; font-family: Arial, sans-serif; }
+        video { width: 45%; border: 2px solid black; margin: 10px; }
+        button { padding: 10px 20px; margin: 10px; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+    <h2>WebRTC Video Call</h2>
+    <label>Enter Your Username:</label>
+    <input type="text" id="username" placeholder="Your Name">
+    <button onclick="joinCall()">Join Call</button>
+
+    <h3>Online Users</h3>
+    <select id="usersList"></select>
+    <button onclick="startCall()">Call</button>
+
+    <br><br>
+    <video id="localVideo" autoplay playsinline muted></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+
+    <script>
+        const socket = io.connect("http://localhost:5000");  // Change to your server IP if needed
+        let localStream, remoteStream, peerConnection;
+        const servers = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+        function joinCall() {
+            const username = document.getElementById("username").value;
+            if (!username) return alert("Enter a username!");
+            socket.emit("join", { username });
+
+            navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+                .then(stream => {
+                    document.getElementById("localVideo").srcObject = stream;
+                    localStream = stream;
+                })
+                .catch(error => console.error("Error accessing camera:", error));
+        }
+
+        socket.on("user_list", users => {
+            let usersDropdown = document.getElementById("usersList");
+            usersDropdown.innerHTML = "";
+            users.forEach(user => {
+                let option = document.createElement("option");
+                option.value = user;
+                option.innerText = user;
+                usersDropdown.appendChild(option);
+            });
+        });
+
+        function startCall() {
+            const receiver = document.getElementById("usersList").value;
+            if (!receiver) return alert("Select a user to call!");
+
+            peerConnection = new RTCPeerConnection(servers);
+            peerConnection.ontrack = event => document.getElementById("remoteVideo").srcObject = event.streams[0];
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            peerConnection.createOffer()
+                .then(offer => {
+                    peerConnection.setLocalDescription(offer);
+                    socket.emit("offer", { receiver, offer });
+                })
+                .catch(error => console.error("Error creating offer:", error));
+        }
+
+        socket.on("offer", data => {
+            peerConnection = new RTCPeerConnection(servers);
+            peerConnection.ontrack = event => document.getElementById("remoteVideo").srcObject = event.streams[0];
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+            peerConnection.createAnswer()
+                .then(answer => {
+                    peerConnection.setLocalDescription(answer);
+                    socket.emit("answer", { receiver: data.sender, answer });
+                })
+                .catch(error => console.error("Error creating answer:", error));
+        });
+
+        socket.on("answer", data => peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer)));
+        socket.on("ice-candidate", data => peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)));
+
+        socket.on("connect", () => console.log("Connected to signaling server."));
+    </script>
+</body>
+</html>
